@@ -5,11 +5,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
-import androidx.lifecycle.LiveData
-import androidx.lifecycle.MutableLiveData
 import com.avion.multiimageupload.BuildConfig
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -55,15 +51,9 @@ class Constants {
         }
 
 
-        suspend fun getCompressedImage(context: Context, fullSizeBitmap: Bitmap): LiveData<File> =
-            withContext(
-                Dispatchers.IO
-            )
-            {
-                val fileLiveData: MutableLiveData<File> = MutableLiveData()
-                fileLiveData.postValue(getCompressedBitmapFile(context, fullSizeBitmap))
-                return@withContext fileLiveData
-            }
+         fun getCompressedImage(context: Context, fullSizeBitmap: Bitmap): File =
+            getCompressedBitmapFile(context, fullSizeBitmap)
+
 
         fun getCompressedBitmapFile(context: Context, fullSizeBitmap: Bitmap): File {
 

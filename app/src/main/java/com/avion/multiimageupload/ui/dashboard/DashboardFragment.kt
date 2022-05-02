@@ -23,25 +23,21 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
+import com.avion.multiimageupload.R
 import com.avion.multiimageupload.adapter.AdapterGallery
 import com.avion.multiimageupload.databinding.FragmentDashboardBinding
 import com.avion.multiimageupload.utils.Constants
 import com.bumptech.glide.Glide
+import com.google.android.material.snackbar.Snackbar
 import com.google.firebase.storage.FirebaseStorage
 import com.theartofdev.edmodo.cropper.CropImage
 import com.theartofdev.edmodo.cropper.CropImageView
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.*
 import kotlinx.coroutines.tasks.await
-import kotlinx.coroutines.withContext
 import java.util.*
 
 
 class DashboardFragment : Fragment(), AdapterGallery.OnItemClickListener {
-
-    private val listOfImagesToUpload: MutableList<Uri> = arrayListOf()
-
 
     private var _binding: FragmentDashboardBinding? = null
     private val binding get() = _binding!!
@@ -79,19 +75,37 @@ class DashboardFragment : Fragment(), AdapterGallery.OnItemClickListener {
                 setHasFixedSize(true)
             }
 
-            btnUpload.setOnClickListener() {
-                uploadMultiple(listOfImagesToUpload).observe(viewLifecycleOwner) {
-                    it?.let { listOfImageUrls ->
-                        listOfImageUrls.forEachIndexed { index, url ->
-                            println(url)
+            viewModel.selectedImages.observe(viewLifecycleOwner) { images ->
+                adapterGallery.submitList(images)
+                btnUpload.setOnClickListener {
+                    if (images.isNotEmpty())
+                        uploadMultiple(images).observe(viewLifecycleOwner) {
+                            it?.let { listOfImageUrls ->
+                                listOfImageUrls.forEachIndexed { _, url ->
+                                    println(url)
+                                }
+                            }
+
+                            if (it.isNotEmpty()) {
+                                Snackbar.make(
+                                    binding.root,
+                                    "${getImageAnnotation(it.size)} uploaded successfully.",
+                                    Snackbar.LENGTH_LONG
+                                ).show()
+                                viewModel.setSelectedImages(mutableListOf())
+                            }
                         }
-                    }
                 }
             }
-            btnSelect.setOnClickListener() {
+
+            btnSelect.setOnClickListener {
                 openFilePicker { pickFile("image/*") }
             }
         }
+    }
+
+    private fun getImageAnnotation(size: Int): String {
+        return if (size == 1) "Image" else "${size} Images"
     }
 
     override fun onDestroyView() {
@@ -170,8 +184,9 @@ class DashboardFragment : Fragment(), AdapterGallery.OnItemClickListener {
                             }
 
                         }
-                        adapterGallery.submitList(listOfImages)
-
+//                        without compression
+//                        viewModel.setSelectedImages(listOfImages)
+//                        use this function to compress images
                         compressImages(listOfImages)
                     }
                     //If single image selected
@@ -182,6 +197,7 @@ class DashboardFragment : Fragment(), AdapterGallery.OnItemClickListener {
                             .setAspectRatio(1920, 1080)
                             .setMinCropResultSize(1920, 1080)
                             .setAllowFlipping(false)
+                            .setCropMenuCropButtonIcon(R.drawable.ic_baseline_check_24)
                             .setGuidelines(CropImageView.Guidelines.OFF)
                             .setRequestedSize(
                                 1920,
@@ -201,18 +217,17 @@ class DashboardFragment : Fragment(), AdapterGallery.OnItemClickListener {
                 CropImage.getActivityResult(result.data)?.let { cropResult ->
 
                     CoroutineScope(Dispatchers.IO).launch {
-                        val bitmap =
+                        val task = async {
                             Glide.with(requireContext()).asBitmap().load(cropResult.uri).submit()
-                                .get()/* this is synchronous approach */
+                                .get()
+                        }
 
-                        Log.e("Cropped Image Width", "${bitmap.width}")
-                        Log.e("Cropped Image Height", "${bitmap.height}")
+                        Log.e("Cropped Image Width", "${task.await().width}")
+                        Log.e("Cropped Image Height", "${task.await().height}")
                     }
 
                     val images = mutableListOf(cropResult.uri)
-                    adapterGallery.submitList(images)
-                    listOfImagesToUpload.clear()
-                    listOfImagesToUpload.addAll(images)
+                    viewModel.setSelectedImages(images)
 
                 }
             }
@@ -222,31 +237,31 @@ class DashboardFragment : Fragment(), AdapterGallery.OnItemClickListener {
     private fun compressImages(listOfImages: MutableList<Uri>) {
         val compressedImages: MutableList<Uri> = arrayListOf()
 
-        viewLifecycleOwner.lifecycleScope.launch() {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             for (imageUri in listOfImages) {
-                println("Got image at: $imageUri")
-                val filePath =
-                    Constants.createUriToTempFile(
+                val task = async {
+                    println("Got image at: $imageUri")
+                    val filePath =
+                        Constants.createUriToTempFile(
+                            requireContext(),
+                            imageUri
+                        )?.absolutePath
+
+                    val fullSizeBitmap: Bitmap = BitmapFactory.decodeFile(filePath)
+                    Constants.getCompressedImage(
                         requireContext(),
-                        imageUri
-                    )?.absolutePath
-
-                val fullSizeBitmap: Bitmap = BitmapFactory.decodeFile(filePath)
-
-                Constants.getCompressedImage(
-                    requireContext(),
-                    fullSizeBitmap
-                ).observe(viewLifecycleOwner) {
-                    it?.apply {
-                        println("ready to upload file at: " + toUri())
-                        compressedImages.add(toUri())
-                    }
+                        fullSizeBitmap
+                    ).toUri()
                 }
+                compressedImages.add(task.await())
+            }
+            withContext(Dispatchers.Main) {
+                viewModel.setSelectedImages(compressedImages)
             }
 
-            listOfImagesToUpload.clear()
-            listOfImagesToUpload.addAll(compressedImages)
         }
+
+
     }
 
     private fun uploadMultiple(
@@ -256,7 +271,6 @@ class DashboardFragment : Fragment(), AdapterGallery.OnItemClickListener {
         val listOfUploadedImages = mutableListOf<String>()
         progressDialog.setTitle("Uploading...")
         progressDialog.show()
-
         lifecycleScope.launch(Dispatchers.IO) {
             fileUriList.forEachIndexed { index, imageUri ->
                 try {
