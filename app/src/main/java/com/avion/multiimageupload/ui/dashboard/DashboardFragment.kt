@@ -14,45 +14,45 @@ import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.app.ActivityCompat
 import androidx.core.net.toUri
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.viewModels
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import com.avion.multiimageupload.adapter.AdapterGallery
 import com.avion.multiimageupload.databinding.FragmentDashboardBinding
 import com.avion.multiimageupload.utils.Constants
 import com.bumptech.glide.Glide
-import com.google.android.gms.tasks.Task
 import com.google.firebase.storage.FirebaseStorage
 import com.theartofdev.edmodo.cropper.CropImage
 import com.theartofdev.edmodo.cropper.CropImageView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 import java.util.*
-import java.util.concurrent.TimeUnit
 
 
 class DashboardFragment : Fragment(), AdapterGallery.OnItemClickListener {
 
     private val listOfImagesToUpload: MutableList<Uri> = arrayListOf()
-    private var _binding: FragmentDashboardBinding? = null
 
+
+    private var _binding: FragmentDashboardBinding? = null
     private val binding get() = _binding!!
 
-    private lateinit var viewmodel: DashboardViewModel
+    private val viewModel: DashboardViewModel by viewModels()
 
     private var adapterGallery: AdapterGallery = AdapterGallery(this)
-
     private var storage: FirebaseStorage = FirebaseStorage.getInstance()
-
     private var storageReference = storage.reference
+
+
     private lateinit var progressDialog: ProgressDialog;
 
     override fun onCreateView(
@@ -60,12 +60,9 @@ class DashboardFragment : Fragment(), AdapterGallery.OnItemClickListener {
         container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
-        viewmodel =
-            ViewModelProvider(this).get(DashboardViewModel::class.java)
         _binding = FragmentDashboardBinding.inflate(inflater, container, false)
-        val root: View = binding.root
 
-        return root
+        return binding.root
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -83,19 +80,16 @@ class DashboardFragment : Fragment(), AdapterGallery.OnItemClickListener {
             }
 
             btnUpload.setOnClickListener() {
-
                 uploadMultiple(listOfImagesToUpload).observe(viewLifecycleOwner) {
-                    Toast.makeText(
-                        requireContext(),
-                        "Uploading " + it.size + " Images to server",
-                        Toast.LENGTH_LONG
-                    ).show()
+                    it?.let { listOfImageUrls ->
+                        listOfImageUrls.forEachIndexed { index, url ->
+                            println(url)
+                        }
+                    }
                 }
-
-
             }
             btnSelect.setOnClickListener() {
-                openFilePicker(pickFile("image/*"))
+                openFilePicker { pickFile("image/*") }
             }
         }
     }
@@ -108,7 +102,7 @@ class DashboardFragment : Fragment(), AdapterGallery.OnItemClickListener {
 
     //================================Check Storage Permissions=======================================
 
-    lateinit var tempFunction: Unit // used to pass function to openFilePicker Function
+    private lateinit var tempFunction: () -> Unit // used to pass function to openFilePicker Function
 
     // util method
     private fun hasPermissions(context: Context, permissions: Array<String>): Boolean =
@@ -123,17 +117,17 @@ class DashboardFragment : Fragment(), AdapterGallery.OnItemClickListener {
                 it.value == true
             }
             if (granted) {
-                tempFunction
+                tempFunction.invoke()
             }
         }
 
 
-    private fun openFilePicker(functionCall: Unit) {
+    private fun openFilePicker(functionCall: () -> Unit) {
         tempFunction = functionCall
 
         activity.let {
             if (hasPermissions(activity as Context, Constants.IMAGE_PERMISSIONS)) {
-                val result = functionCall
+                functionCall.invoke()
             } else {
                 permReqLauncher.launch(
                     Constants.IMAGE_PERMISSIONS
@@ -150,18 +144,17 @@ class DashboardFragment : Fragment(), AdapterGallery.OnItemClickListener {
     ) {
         if (mimetype != null) {
             if (mimetype == "image/*") {
-//                getProfileImageContent.launch(mimetype)
+
                 val intent = Intent(ACTION_GET_CONTENT)
                 intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
                 intent.type = "image/*"
                 pickMultipleImages.launch(intent)
-                //use for multiple images
 
             }
         }
     }
 
-    val pickMultipleImages =
+    private val pickMultipleImages =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == Activity.RESULT_OK) {
                 if (result.resultCode == Activity.RESULT_OK) {
@@ -216,7 +209,6 @@ class DashboardFragment : Fragment(), AdapterGallery.OnItemClickListener {
                         Log.e("Cropped Image Height", "${bitmap.height}")
                     }
 
-
                     val images = mutableListOf(cropResult.uri)
                     adapterGallery.submitList(images)
                     listOfImagesToUpload.clear()
@@ -228,7 +220,7 @@ class DashboardFragment : Fragment(), AdapterGallery.OnItemClickListener {
 
 
     private fun compressImages(listOfImages: MutableList<Uri>) {
-        var compressedImages: MutableList<Uri> = arrayListOf()
+        val compressedImages: MutableList<Uri> = arrayListOf()
 
         viewLifecycleOwner.lifecycleScope.launch() {
             for (imageUri in listOfImages) {
@@ -263,63 +255,34 @@ class DashboardFragment : Fragment(), AdapterGallery.OnItemClickListener {
         val uploadedFileUrl = MutableLiveData<List<String>>()
         val listOfUploadedImages = mutableListOf<String>()
         progressDialog.setTitle("Uploading...")
-        var numberOfFilesUploaded = 0;
-        fileUriList.forEachIndexed { index, imageUri ->
-            println("index = $index, item = $imageUri ")
+        progressDialog.show()
 
-            val reference = storageReference.child(UUID.randomUUID().toString())
-            val uploadTask = reference.putFile(imageUri)
-            // Code for showing progressDialog while uploading
-            progressDialog.setMessage("Uploading 1/${fileUriList.size}")
-            progressDialog.show()
+        lifecycleScope.launch(Dispatchers.IO) {
+            fileUriList.forEachIndexed { index, imageUri ->
+                try {
+                    val reference = storageReference.child(UUID.randomUUID().toString())
+                    progressDialog.setMessage("Uploading ${index + 1}/${fileUriList.size}")
+                    val uploadTask =
+                        reference.putFile(imageUri)
+                            .await()
+                            .storage
+                            .downloadUrl
+                            .await()
+                    listOfUploadedImages.add(uploadTask.toString())
 
-            uploadTask.addOnSuccessListener {
-                val urlTask: Task<Uri> = it.storage.downloadUrl
-                while (!urlTask.isSuccessful);
-                val downloadUrl: Uri = urlTask.result!!
-                listOfUploadedImages.add(downloadUrl.toString())
-                numberOfFilesUploaded++
-                progressDialog.setMessage("Uploading ${numberOfFilesUploaded}/${fileUriList.size}")
-                println("Uploaded file ${numberOfFilesUploaded}")
-                if (numberOfFilesUploaded == fileUriList.size)
-                    uploadedFileUrl.value = listOfUploadedImages
-            }
-            val urlTask = uploadTask.continueWithTask { task ->
-                if (!task.isSuccessful) {
-                    throw task.exception!!
-                }
-
-                reference.downloadUrl
-            }.addOnCompleteListener { _ ->
-                if (numberOfFilesUploaded == fileUriList.size)
-                    progressDialog.dismiss()
-            }.addOnFailureListener {
-                numberOfFilesUploaded++
-                if (numberOfFilesUploaded == fileUriList.size) {
-                    uploadedFileUrl.value = listOfUploadedImages
-                    progressDialog.dismiss()
+                } catch (e: Exception) {
+                    e.printStackTrace()
                 }
             }
-            uploadTask.addOnProgressListener { taskSnapshot ->
-                // Progress Listener for loading
-                // percentage on the dialog box
-                val progress = (100.0
-                        * taskSnapshot.bytesTransferred
-                        / taskSnapshot.totalByteCount)
-                /* progressDialog.setMessage(
-                     "Uploaded "
-                             + progress.toInt() + "%"
-                 )*/
+            withContext(Dispatchers.Main) {
+                uploadedFileUrl.value = listOfUploadedImages
+                progressDialog.dismiss()
             }
         }
         return uploadedFileUrl
     }
 
     override fun onItemClick(task: Uri, position: Int) {
-
-    }
-
-    private fun openCropActivity(sourceUri: Uri, destinationUri: Uri) {
 
     }
 }
