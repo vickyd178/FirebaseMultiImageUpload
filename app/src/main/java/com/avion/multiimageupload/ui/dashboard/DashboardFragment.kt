@@ -10,6 +10,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -26,10 +27,17 @@ import androidx.recyclerview.widget.GridLayoutManager
 import com.avion.multiimageupload.adapter.AdapterGallery
 import com.avion.multiimageupload.databinding.FragmentDashboardBinding
 import com.avion.multiimageupload.utils.Constants
+import com.bumptech.glide.Glide
 import com.google.android.gms.tasks.Task
 import com.google.firebase.storage.FirebaseStorage
+import com.theartofdev.edmodo.cropper.CropImage
+import com.theartofdev.edmodo.cropper.CropImageView
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.util.*
+import java.util.concurrent.TimeUnit
+
 
 class DashboardFragment : Fragment(), AdapterGallery.OnItemClickListener {
 
@@ -176,10 +184,48 @@ class DashboardFragment : Fragment(), AdapterGallery.OnItemClickListener {
                     //If single image selected
                     else if (data?.data != null) {
                         val imageUri: Uri? = data.data
+
+                        val intent = CropImage.activity(imageUri)
+                            .setAspectRatio(1920, 1080)
+                            .setMinCropResultSize(1920, 1080)
+                            .setAllowFlipping(false)
+                            .setGuidelines(CropImageView.Guidelines.OFF)
+                            .setRequestedSize(
+                                1920,
+                                1080,
+                                CropImageView.RequestSizeOptions.SAMPLING
+                            )
+                            .getIntent(requireActivity())
+                        imageCropperLauncher.launch(intent)
                     }
                 }
             }
         }
+
+    private var imageCropperLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == Activity.RESULT_OK) {
+                CropImage.getActivityResult(result.data)?.let { cropResult ->
+
+                    CoroutineScope(Dispatchers.IO).launch {
+                        val bitmap =
+                            Glide.with(requireContext()).asBitmap().load(cropResult.uri).submit()
+                                .get()/* this is synchronous approach */
+
+                        Log.e("Cropped Image Width", "${bitmap.width}")
+                        Log.e("Cropped Image Height", "${bitmap.height}")
+                    }
+
+
+                    val images = mutableListOf(cropResult.uri)
+                    adapterGallery.submitList(images)
+                    listOfImagesToUpload.clear()
+                    listOfImagesToUpload.addAll(images)
+
+                }
+            }
+        }
+
 
     private fun compressImages(listOfImages: MutableList<Uri>) {
         var compressedImages: MutableList<Uri> = arrayListOf()
@@ -265,7 +311,6 @@ class DashboardFragment : Fragment(), AdapterGallery.OnItemClickListener {
                              + progress.toInt() + "%"
                  )*/
             }
-
         }
         return uploadedFileUrl
     }
@@ -274,4 +319,7 @@ class DashboardFragment : Fragment(), AdapterGallery.OnItemClickListener {
 
     }
 
+    private fun openCropActivity(sourceUri: Uri, destinationUri: Uri) {
+
+    }
 }
