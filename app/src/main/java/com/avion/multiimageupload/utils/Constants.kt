@@ -17,6 +17,7 @@ class Constants {
         var IMAGE_PERMISSIONS =
             if (Build.VERSION.SDK_INT > 28)
                 arrayOf(
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
                     Manifest.permission.CAMERA,
                     Manifest.permission.READ_EXTERNAL_STORAGE
                 )
@@ -39,7 +40,7 @@ class Constants {
             return null
         }
 
-        fun createImageFile(context: Context): File {
+        private fun createImageFile(context: Context): File {
             val timeStamp = SimpleDateFormat.getDateTimeInstance().format(Date())
             val storageDir = context.cacheDir
 

@@ -5,7 +5,6 @@ import android.app.ProgressDialog
 import android.content.Context
 import android.content.Intent
 import android.content.Intent.ACTION_GET_CONTENT
-import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -15,7 +14,6 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.app.ActivityCompat
 import androidx.core.net.toUri
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
@@ -23,6 +21,7 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
+import com.avion.easypermissions.EasyPermissionManager
 import com.avion.multiimageupload.R
 import com.avion.multiimageupload.adapter.AdapterGallery
 import com.avion.multiimageupload.databinding.FragmentDashboardBinding
@@ -38,7 +37,6 @@ import java.util.*
 
 
 class DashboardFragment : Fragment(), AdapterGallery.OnItemClickListener {
-
     private var _binding: FragmentDashboardBinding? = null
     private val binding get() = _binding!!
 
@@ -64,6 +62,12 @@ class DashboardFragment : Fragment(), AdapterGallery.OnItemClickListener {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         initialize()
+    }
+
+
+    override fun onAttach(context: Context) {
+        super.onAttach(context)
+//        EasyPermissionManager.createAndGetPermissionLauncher(requireActivity())
     }
 
     private fun initialize() {
@@ -99,7 +103,16 @@ class DashboardFragment : Fragment(), AdapterGallery.OnItemClickListener {
             }
 
             btnSelect.setOnClickListener {
-                openFilePicker { pickFile("image/*") }
+                try {
+
+                    EasyPermissionManager.requestPermissions(
+                        requireContext(),
+                        Constants.IMAGE_PERMISSIONS
+                    ) { pickFile("image/*") }
+
+                }catch (exception:Exception){
+                    exception.printStackTrace()
+                }
             }
         }
     }
@@ -113,42 +126,6 @@ class DashboardFragment : Fragment(), AdapterGallery.OnItemClickListener {
         _binding = null
     }
 
-
-    //================================Check Storage Permissions=======================================
-
-    private lateinit var tempFunction: () -> Unit // used to pass function to openFilePicker Function
-
-    // util method
-    private fun hasPermissions(context: Context, permissions: Array<String>): Boolean =
-        permissions.all {
-            ActivityCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
-        }
-
-
-    val permReqLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
-            val granted = permissions.entries.all {
-                it.value == true
-            }
-            if (granted) {
-                tempFunction.invoke()
-            }
-        }
-
-
-    private fun openFilePicker(functionCall: () -> Unit) {
-        tempFunction = functionCall
-
-        activity.let {
-            if (hasPermissions(activity as Context, Constants.IMAGE_PERMISSIONS)) {
-                functionCall.invoke()
-            } else {
-                permReqLauncher.launch(
-                    Constants.IMAGE_PERMISSIONS
-                )
-            }
-        }
-    }
 
 
 //    =========================Pick Image=============================================================
@@ -192,7 +169,6 @@ class DashboardFragment : Fragment(), AdapterGallery.OnItemClickListener {
                     //If single image selected
                     else if (data?.data != null) {
                         val imageUri: Uri? = data.data
-
                         val intent = CropImage.activity(imageUri)
                             .setAspectRatio(1920, 1080)
                             .setMinCropResultSize(1920, 1080)
